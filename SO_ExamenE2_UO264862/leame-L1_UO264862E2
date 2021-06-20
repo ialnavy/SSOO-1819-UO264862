@@ -1,0 +1,100 @@
+// En OperatingSystem.h
+// Declaramos la constante asociada a la nueva llamada del sistema
+enum SystemCallIdentifiers { SYSCALL_END = 3, SYSCALL_YIELD = 4 , SYSCALL_PRINTEXECPID = 5, SYSCALL_SLEEP = 7, SYSCALL_EXEC = 8};
+
+// En OperatingSystem.c
+// Implementamos el caso en el manejador de llamadas del sistema en el que se llame a 'exec'
+void OperatingSystem_HandleSystemCall() {
+	int systemCallID; int previousState = processTable[executingProcessID].state;
+	// Register A contains the identifier of the issued system call
+	systemCallID = Processor_GetRegisterA();
+	switch (systemCallID) {
+		case SYSCALL_SLEEP:
+			OperatingSystem_SystemCallSleep();
+			break;
+		case SYSCALL_PRINTEXECPID:
+			// Show message: "Process [executingProcessID] has the processor assigned\n"
+			OperatingSystem_ShowTime(SYSPROC);
+			ComputerSystem_DebugMessage(24,SYSPROC,executingProcessID,programList[processTable[executingProcessID].programListIndex]->executableName);
+			break;
+		case SYSCALL_YIELD:
+			OperatingSystem_SystemCallYield();
+			break;
+		case SYSCALL_END:
+			// Show message: "Process [executingProcessID] has requested to terminate\n"
+			OperatingSystem_ShowTime(SYSPROC);
+			ComputerSystem_DebugMessage(25,SYSPROC,executingProcessID,programList[processTable[executingProcessID].programListIndex]->executableName);
+			OperatingSystem_ShowTime(SYSPROC);
+			ComputerSystem_DebugMessage(110,SYSPROC,executingProcessID,programList[processTable[executingProcessID].programListIndex] -> executableName,statesNames[previousState],statesNames[EXIT]);
+			OperatingSystem_TerminateProcess();
+			break;
+		case SYSCALL_EXEC:
+			OperatingSystem_SystemCallExec();
+			break;
+		default:
+			// Show message: "[79] Process [1 - NombreProcesoPid1] has made an invalid system call (777) and is being terminated"
+			OperatingSystem_ShowTime(INTERRUPT);
+			ComputerSystem_DebugMessage(141,INTERRUPT,executingProcessID,programList[processTable[executingProcessID].programListIndex]->executableName,systemCallID);
+			OperatingSystem_ShowTime(SYSPROC);
+			ComputerSystem_DebugMessage(110,SYSPROC,executingProcessID,programList[processTable[executingProcessID].programListIndex] -> executableName,statesNames[previousState],statesNames[EXIT]);
+			OperatingSystem_TerminateProcess();
+			break;
+	}
+}
+
+// En OperatingSystem.c
+// Implementamos la función prototipo
+void OperatingSystem_SystemCallExec();
+
+// En messagesSTD.txt
+151,@RERROR: the program [%d] does not exist in Program List@@\n
+152,@RERROR: the EXEC [%d] system call has failed for process [%d - %s]@@\n
+153,Process [%d - %s] becomes [%d - %s]\n
+
+// En OperatingSystem.c
+void OperatingSystem_SystemCallExec() {
+	FILE *programFile;
+	int followingProgramIndex = Processor_GetAccumulator();
+	char* previousProgramName = programList[processTable[executingProcessID].programListIndex] -> executableName;
+	char* followingProgramName = programList[followingProgramIndex] -> executableName;
+	if (followingProgramIndex < 0 || followingProgramIndex >= PROGRAMSMAXNUMBER || programList[followingProgramIndex] == NULL) {
+		OperatingSystem_ShowTime(ERROR);
+		ComputerSystem_DebugMessage(151,ERROR,followingProgramIndex);
+	} else {
+		int processSize = OperatingSystem_ObtainProgramSize(&programFile, followingProgramName);	
+		if (processSize == PROGRAMDOESNOTEXIST || processSize == PROGRAMNOTVALID) {
+			OperatingSystem_ShowTime(ERROR);
+			ComputerSystem_DebugMessage(152,ERROR,followingProgramIndex,executingProcessID,previousProgramName);
+			OperatingSystem_TerminateProcess();
+		} else {
+			processTable[executingProcessID].processSize = processSize;
+			int priority = OperatingSystem_ObtainPriority(programFile);
+			if (priority == PROGRAMNOTVALID) {
+				OperatingSystem_ShowTime(ERROR);
+				ComputerSystem_DebugMessage(152,ERROR,followingProgramIndex,executingProcessID,previousProgramName);
+				OperatingSystem_TerminateProcess();
+			} else {
+				processTable[executingProcessID].priority = priority;
+				int loadingPhysicalAddress = OperatingSystem_ObtainMainMemory(processSize,executingProcessID,followingProgramName);
+				if (loadingPhysicalAddress == TOOBIGPROCESS || loadingPhysicalAddress == MEMORYFULL) {
+					OperatingSystem_ShowTime(ERROR);
+					ComputerSystem_DebugMessage(152,ERROR,followingProgramIndex,executingProcessID,previousProgramName);
+					OperatingSystem_TerminateProcess();
+				} else {
+					int wasTheProgramLoadedSuccessfully = OperatingSystem_LoadProgram(programFile, loadingPhysicalAddress, processSize);
+					if (wasTheProgramLoadedSuccessfully == TOOBIGPROCESS) {
+						OperatingSystem_ShowTime(ERROR);
+						ComputerSystem_DebugMessage(152,ERROR,followingProgramIndex,executingProcessID,previousProgramName);
+						OperatingSystem_TerminateProcess();
+					} else {
+						OperatingSystem_ShowTime(INTERRUPT);
+						ComputerSystem_DebugMessage(153,INTERRUPT,executingProcessID,previousProgramName, executingProcessID,followingProgramName);
+						processTable[executingProcessID].initialPhysicalAddress = loadingPhysicalAddress;
+						processTable[executingProcessID].programListIndex = followingProgramIndex;
+						OperatingSystem_RestoreContext(executingProcessID);
+					}
+				}
+			}
+		}
+	}
+}
